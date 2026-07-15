@@ -15,10 +15,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
@@ -27,13 +27,17 @@ jobs:
 
       - name: Run checkin
         env:
+          # 多账户模式：每行一个 email:password
+          ACCOUNTS: ${{ secrets.ACCOUNTS }}
+          # 单账户模式（兼容旧配置，ACCOUNTS 优先）
           EMAIL: ${{ secrets.EMAIL }}
           PASSWORD: ${{ secrets.PASSWORD }}
+          # Telegram（可选）
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python checkin.py
 
-      - name: clear old run jobs
+      - name: Clear old run jobs
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
