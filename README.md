@@ -1,7 +1,7 @@
-# iamhc Auto Check-in Script
+# multi-checkin-iamhc
 
-Automatically logs in to [api.hcnsec.cn](https://api.hcnsec.cn) and performs a daily check-in, with optional Telegram notifications.  
-Supports **multi-account batch check-in**.
+A multi-account auto check-in script for [api.hcnsec.cn](https://api.hcnsec.cn), with optional Telegram notifications.  
+Supports **batch check-in across multiple accounts** via a single GitHub Actions workflow.
 
 ---
 
@@ -65,3 +65,11 @@ The following improvements were made on top of the original:
 - 🕐 **Proper timezone handling** — replaced manual UTC+8 offset with Python's `datetime.timezone`
 - 🌐 **English UI** — all messages, logs, and notifications translated to English
 - 🔁 **Fixed GitHub Actions versions** — upgraded from non-existent `@v6` to stable `@v4`
+
+---
+
+## Disclaimer
+
+> **This script is intended for educational and personal automation purposes only.**  
+> Use it at your own risk. The author is not responsible for any consequences arising from its use.  
+> Make sure your usage complies with the Terms of Service of the platform you are interacting with.
