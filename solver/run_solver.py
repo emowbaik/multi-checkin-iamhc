@@ -17,7 +17,7 @@ if PROXY:
         fh.write(PROXY + "\n")
 
 app = create_app(
-    headless=True,
+    headless=os.environ.get("SOLVER_HEADLESS", "1") != "0",
     thread=2,
     page_count=2,
     proxy_support=bool(PROXY),

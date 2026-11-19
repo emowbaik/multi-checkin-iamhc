@@ -85,6 +85,15 @@ def quota_to_dollar(quota) -> float:
 # HTTP helpers (one session, one egress IP)
 # ---------------------------------------------------------------------------
 
+def _opener():
+    """urllib opener that honours PROXY, so requests leave via the same exit."""
+    proxy = os.environ.get("PROXY", "").strip()
+    if not proxy:
+        return urllib.request.build_opener()
+    handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+    return urllib.request.build_opener(handler)
+
+
 def http_json(url: str, *, method: str = "GET", body: dict | None = None,
               headers: dict | None = None, timeout: int = 30) -> tuple[int, dict | None]:
     data = json.dumps(body).encode() if body is not None else None
@@ -99,7 +108,7 @@ def http_json(url: str, *, method: str = "GET", body: dict | None = None,
     for key, value in (headers or {}).items():
         req.add_header(key, value)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with _opener().open(req, timeout=timeout) as response:
             raw = response.read()
             status = response.status
     except urllib.error.HTTPError as exc:
@@ -130,24 +139,28 @@ class Solver:
                 time.sleep(2)
         return False
 
-    def turnstile(self, url: str, sitekey: str) -> str | None:
+    def turnstile(self, url: str, sitekey: str, attempts: int = 3) -> str | None:
         query = urllib.parse.urlencode({"url": url, "sitekey": sitekey})
-        status, data = http_json(f"{self.base}/turnstile?{query}", timeout=30)
-        task_id = (data or {}).get("task_id")
-        if not task_id:
-            print(f"   solver rejected task: {data}")
-            return None
-        deadline = time.time() + SOLVE_TIMEOUT_SEC
-        while time.time() < deadline:
-            time.sleep(2)
-            _, result = http_json(f"{self.base}/result?id={task_id}", timeout=20)
-            state = (result or {}).get("status")
-            if state == "success":
-                return (result or {}).get("value")
-            if state == "error":
-                print(f"   solver error: {result}")
+        for attempt in range(1, attempts + 1):
+            status, data = http_json(f"{self.base}/turnstile?{query}", timeout=30)
+            task_id = (data or {}).get("task_id")
+            if not task_id:
+                print(f"   solver rejected task: {data}")
                 return None
-        print("   solver timed out")
+            deadline = time.time() + SOLVE_TIMEOUT_SEC
+            while time.time() < deadline:
+                time.sleep(2)
+                _, result = http_json(f"{self.base}/result?id={task_id}", timeout=20)
+                state = (result or {}).get("status")
+                if state == "success":
+                    return (result or {}).get("value")
+                if state == "error":
+                    print(f"   solver error (attempt {attempt}/{attempts}): "
+                          f"{(result or {}).get('value')}")
+                    break
+            else:
+                print(f"   solver timed out (attempt {attempt}/{attempts})")
+            time.sleep(3)
         return None
 
 
@@ -310,6 +323,7 @@ def main() -> int:
         return 1
 
     results: list[dict] = []
+    solve_failures = 0
     for index, (email, password) in enumerate(accounts, 1):
         try:
             result = checkin_account(solver, email, password, index, len(accounts))
@@ -318,6 +332,18 @@ def main() -> int:
                       "time": datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S")}
             print(f"[{index}/{len(accounts)}] ❌ error: {exc}")
         results.append(result)
+
+        # Bail out early when the widget cannot be solved at all: retrying 13
+        # accounts against a blocked exit burns CI minutes for nothing.
+        if result.get("error", "").startswith("turnstile"):
+            solve_failures += 1
+            if solve_failures >= 3:
+                print("❌ Turnstile unsolvable from this exit (3 in a row) — "
+                      "aborting; configure PROXY with a residential exit.")
+                break
+        else:
+            solve_failures = 0
+
         if index < len(accounts):
             time.sleep(DELAY_BETWEEN_ACCOUNTS_SEC)
 
