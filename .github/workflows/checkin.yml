@@ -2,18 +2,38 @@ name: iamhc Daily Checkin
 
 on:
   schedule:
-    # 每天 UTC 23:00 运行（即北京时间次日 07:00）
+    # 23:00 UTC = 07:00 CST (Asia/Shanghai) — primary slot
     - cron: '0 23 * * *'
-  workflow_dispatch: # 支持手动触发
+    # Backup slot 00:20 UTC: GitHub drops scheduled ticks under load, and the
+    # site answers "already checked in" for a second run, so it is harmless.
+    - cron: '20 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write    # prune old runs
+  contents: write   # monthly heartbeat commit (keeps schedules alive)
+
+concurrency:
+  group: iamhc-checkin
+  cancel-in-progress: false
 
 jobs:
   checkin:
     runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
+    timeout-minutes: 15
 
     steps:
+      - name: Verify secrets are present
+        env:
+          ACCOUNTS: ${{ secrets.ACCOUNTS }}
+          EMAIL: ${{ secrets.EMAIL }}
+        run: |
+          if [ -z "$ACCOUNTS" ] && [ -z "$EMAIL" ]; then
+            echo "::error::Neither ACCOUNTS nor EMAIL is set — nothing to check in."
+            exit 1
+          fi
+          echo "credentials: present"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -23,31 +43,55 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
 
       - name: Run checkin
         env:
-          # 多账户模式：每行一个 email:password
+          # Multi-account: one email:password per line
           ACCOUNTS: ${{ secrets.ACCOUNTS }}
-          # 单账户模式（兼容旧配置，ACCOUNTS 优先）
+          # Single-account fallback (ACCOUNTS wins when set)
           EMAIL: ${{ secrets.EMAIL }}
           PASSWORD: ${{ secrets.PASSWORD }}
-          # Telegram（可选）
+          # Telegram report (optional)
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python checkin.py
 
-      - name: Clear old run jobs
-        if: always()
+      # GitHub disables every scheduled workflow in a repository after 60 days
+      # without repository activity — that is what killed this job on
+      # 2026-09-14 (last push 2026-07-15). A monthly commit from the scheduled
+      # run itself keeps the repo active with no external scheduler.
+      - name: Monthly activity heartbeat
+        if: github.event_name == 'schedule' && github.event.schedule == '0 23 * * *'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          runs=$(gh run list --workflow="${{ github.workflow }}" --limit=100 --json databaseId --jq '.[].databaseId')
-          count=0
-          for run_id in $runs; do
-            count=$((count + 1))
-            if [ $count -gt 1 ]; then
-              echo "deleted: $run_id"
-              gh run delete $run_id || true
-            fi
+          if [ "$(date -u +%d)" != "01" ]; then
+            echo "not the 1st — skipping heartbeat"
+            exit 0
+          fi
+          mkdir -p .github
+          printf 'last scheduled run: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .github/heartbeat.txt
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/heartbeat.txt
+          git commit -m "chore: monthly activity heartbeat" || exit 0
+          git push
+
+      - name: Prune old runs
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run list --workflow "${{ github.workflow }}" --limit 50 \
+            --json databaseId,status \
+            --jq '.[] | select(.status == "completed") | .databaseId' |
+          while read -r id; do
+            [ -z "$id" ] && continue
+            [ "$id" = "${{ github.run_id }}" ] && continue
+            gh run delete "$id" >/dev/null 2>&1 && echo "deleted run $id" || true
           done
+          echo "cleanup done"
