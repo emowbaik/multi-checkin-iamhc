@@ -20,7 +20,7 @@ concurrency:
 jobs:
   checkin:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Verify secrets are present
@@ -38,26 +38,45 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install -r requirements.txt
 
-      - name: Run checkin
+      # The login endpoint rejects requests without a Turnstile token, so a
+      # real browser has to solve the widget. Camoufox ships its own patched
+      # Firefox; fetch it once per run (cached below).
+      - name: Cache Camoufox browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/camoufox
+          key: camoufox-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Fetch Camoufox browser
+        run: python -m camoufox fetch
+
+      - name: Install xvfb
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+
+      - name: Run checkin (solver + API calls)
         env:
-          # Multi-account: one email:password per line
           ACCOUNTS: ${{ secrets.ACCOUNTS }}
-          # Single-account fallback (ACCOUNTS wins when set)
           EMAIL: ${{ secrets.EMAIL }}
           PASSWORD: ${{ secrets.PASSWORD }}
-          # Telegram report (optional)
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: python checkin.py
+          # Optional residential exit. The token is minted and the login POST
+          # leave through the same IP, so no proxy is needed unless the runner
+          # IP itself is refused. Format: http://user:pass@host:port
+          PROXY: ${{ secrets.LOGIN_PROXY }}
+          START_SOLVER: "1"
+          SOLVER_ROOT: ${{ github.workspace }}/solver
+          SOLVER_PORT: "8123"
+        run: xvfb-run -a -s "-screen 0 1280x800x24" python checkin.py
 
       # GitHub disables every scheduled workflow in a repository after 60 days
       # without repository activity — that is what killed this job on

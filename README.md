@@ -43,6 +43,19 @@ Go to the **Actions** tab in your repository, select the `iamhc Daily Checkin` w
 
 ---
 
+## Why a browser runs in CI
+
+Since 2026-11-19 the login endpoint requires a Cloudflare Turnstile token — without
+one it answers `Turnstile token is empty` and every account reports `Login failed`.
+
+`checkin.py` therefore starts a local [Boterdrop solver](solver/UPSTREAM) (Camoufox),
+mints one token per login, and then performs the login/check-in POSTs through the
+same egress IP that solved the challenge (Cloudflare rejects a token presented from
+a different IP). Set the optional `LOGIN_PROXY` secret (`http://user:pass@host:port`)
+when the runner IP itself is refused; the token and the POSTs then both use that exit.
+
+---
+
 ## Getting a Telegram Bot Token and Chat ID
 
 1. Search for `@BotFather` on Telegram, send `/newbot` to create a bot, and copy the **Bot Token**.

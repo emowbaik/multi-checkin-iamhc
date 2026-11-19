@@ -1,0 +1,6 @@
+Camoufox>=0.4.11
+fastapi==0.95.2
+uvicorn>=0.30
+loguru>=0.7
+psutil>=5.9
+requests>=2.31
